@@ -97,7 +97,7 @@ class RandomQPGenerator:
         self.generate_interior_point_form(self.H, self.g, self.bl, self.A, self.bu, self.l, self.u)
         
 
-    def get_genral_problem(self):
+    def get_general_problem(self):
         return self.H, self.g, self.bl, self.A, self.bu, self.l, self.u
     
     def get_interior_point_problem(self):

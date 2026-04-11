@@ -11,7 +11,7 @@ class PrimalDualInteriorPointSolver:
         self.g = g.flatten()
         self.A = A
         self.b = b.flatten()
-        self.C = C
+        self.C = C.toarray() if issparse(C) else np.asarray(C)
         self.d = d.flatten()
 
         self.k = 0

@@ -18,10 +18,12 @@ class RandomQPGenerator:
         H, g, bl, A, bu, l, u
         H and A are sparse matrices
     """
-    def __init__(self, n, alpha, density):
+    def __init__(self, n, alpha, density, beta, flag="sparse"):
         self.n = n
         self.alpha = alpha
         self.density = density
+        self.beta = beta
+        self.flag = flag
 
         self.H = None
         self.g = None
@@ -37,19 +39,14 @@ class RandomQPGenerator:
         self.b_eq = None
 
     def generate_interior_point_form(self, H, g, bl, A, bu, l, u):
-        # Convert sparse to dense if needed
-        A = A.toarray()
-        H = H.toarray()
-
         n, m = A.shape
 
-        # Build C
-        self.C = np.hstack([
-            A,          # A^T x >= bl
-            -A,         # -A^T x >= -bu
-            np.eye(n),  # x >= l
-            -np.eye(n)  # -x >= -u
-        ])
+        # Build C — keep sparse or dense to match A
+        if sp.issparse(A):
+            I = sp.eye(n, format='csr')
+            self.C = sp.hstack([A, -A, I, -I], format='csr')
+        else:
+            self.C = np.hstack([A, -A, np.eye(n), -np.eye(n)])
 
         # Build d
         self.d = np.vstack([
@@ -72,14 +69,10 @@ class RandomQPGenerator:
             H and A are sparse matrices
         """
 
-        m = 10 * self.n
+        m = round(self.beta * self.n)
 
         # Sparse A ~ N(0,1)
         self.A = sp.random(self.n, m, density=self.density, format='csr', data_rvs=np.random.randn)
-
-        # Bounds
-        self.bl = -np.random.rand(m, 1)     # U([-1,0])
-        self.bu = np.random.rand(m, 1)      # U([0,1])
 
         # Sparse M
         M = sp.random(self.n, self.n, density=self.density, format='csr', data_rvs=np.random.randn)
@@ -87,8 +80,17 @@ class RandomQPGenerator:
         # H = M M^T + alpha I (positive definite)
         self.H = M @ M.T + self.alpha * sp.eye(self.n, format='csr')
 
-        # Linear term
-        self.g = np.random.randn(self.n, 1)
+        # Convert to dense immediately if requested
+        if self.flag == 'dense':
+            self.A = self.A.toarray()
+            self.H = self.H.toarray()
+
+        # Bounds
+        self.bl = -np.random.rand(m, 1)     # U([-1,0])
+        self.bu = np.random.rand(m, 1)      # U([0,1])
+
+        # Linear term g ~ U([-1,1])
+        self.g = np.random.uniform(-1, 1, (self.n, 1))
 
         # Variable bounds
         self.l = -np.ones((self.n, 1))

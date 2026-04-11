@@ -6,3 +6,6 @@ class SolutionStats:
         self.time = time
         self.obj = obj
         self.feasibility = feasibility
+
+
+        

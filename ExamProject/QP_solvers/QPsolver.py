@@ -23,8 +23,10 @@ class QPsolver:
         # Define variable
         x = cp.Variable(n)
 
-        # Objective
-        objective = 0.5 * cp.quad_form(x, self.H) + self.g @ x
+        # Objective 
+        H_psd = cp.psd_wrap(self.H) #— psd_wrap skips the ARPACK PSD check for large sparse H 
+                                    #since I decided to reuse the presentation code, which generates sparse H 
+        objective = 0.5 * cp.quad_form(x, H_psd) + self.g @ x
 
         # Constraints
         constraints = [

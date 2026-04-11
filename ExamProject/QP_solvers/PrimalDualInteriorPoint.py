@@ -1,12 +1,13 @@
 from utils import SolutionStats
 import numpy as np
 import time
-from scipy.linalg import ldl
+from scipy.linalg import solve
+from scipy.sparse import issparse
 
 class PrimalDualInteriorPointSolver:
 
     def __init__(self, H, g, A, b, C, d):
-        self.H = H
+        self.H = H.toarray() if issparse(H) else np.asarray(H)
         self.g = g.flatten()
         self.A = A
         self.b = b.flatten()
@@ -14,23 +15,38 @@ class PrimalDualInteriorPointSolver:
         self.d = d.flatten()
 
         self.k = 0
-        self.max_iter = 100
+        self.max_iter = 1000
         self.tol = 1e-6
         self.ni = 0.995  # step size reduction factor to ensure we stay in the interior of the feasible region
 
     def __name__(self):
-        return "Primal-Dual Interior Point Solver"
+        return "Primal-Dual Interior Point Solver"        
     
     def initialize(self):
-        #decided to take the same initial point as in the lecture slides 
+        #we follow the heuristic for an initial point from the lectures
         n = self.H.shape[0]
+        m = self.A.shape[1]
         mc = self.C.shape[1]
 
-        x = np.zeros(n)
-        y = np.zeros(self.A.shape[1])
+        #same as in the primal dual interior point pdf
+        x_bar = np.zeros(n)
+        y_bar = np.zeros(m)
+        z_bar = np.ones(mc)
+        s_bar = np.ones(mc)
 
-        z = np.ones(mc)
-        s = np.ones(mc)
+        #Compute residuals 
+        rL, rA, rC, rSZ = self.compute_residuals(x_bar, y_bar, z_bar, s_bar)
+
+        #compute affine direction using augmented system
+        dx_aff, dy_aff, dz_aff, ds_aff = self.compute_newton_direction(
+            rL, rA, rC, rSZ, x_bar, z_bar, s_bar
+        )
+
+        #enforce positivity
+        z = np.maximum(1.0, np.abs(z_bar + dz_aff))
+        s = np.maximum(1.0, np.abs(s_bar + ds_aff))
+        x = x_bar + dx_aff
+        y = y_bar + dy_aff
 
         return x, y, z, s
     
@@ -50,59 +66,77 @@ class PrimalDualInteriorPointSolver:
     
     def check_convergence(self, rL, rA, rC, rSZ, mu):
         #check convergence conditions - if we are close enough to solution 
-        if (np.linalg.norm(rL) < self.tol and np.linalg.norm(rA) < self.tol and np.linalg.norm(rC) < self.tol and mu < self.tol):
+        if (np.linalg.norm(rL) < self.tol and 
+            np.linalg.norm(rA) < self.tol and 
+            np.linalg.norm(rC) < self.tol and 
+            mu < self.tol):
             return True
         return False
     
-    def solve_ldl(self,L, D, perm, rhs):
-        rhs_perm = rhs[perm]
+    def compute_newton_direction(self, rL, rA, rC, rSZ, x, z, s, target=None):
+        """Solve the augmented 2-block system to get Newton directions.
 
-        # Solve L y = rhs
-        y = np.linalg.solve(L, rhs_perm)
+        Instead of the reduced normal equations (which require z/s ratios
+        that blow up for near-active constraints), solve the larger but
+        numerically stable augmented system:
 
-        # Solve D z = y
-        z = y / np.diag(D)
+            [H,     -C ] [dx]   =  [-rL                  ]
+            [Z*C^T,  S ] [dz]      [Z*rC - rSZ + target  ]
 
-        # Solve L^T x = z
-        x = np.linalg.solve(L.T, z)
+        where Z = diag(z), S = diag(s).  No z/s ratio appears.
+        dz is O(1) even when z/s → ∞.
+        """
+        if target is None:
+            target = np.zeros_like(z)
 
-        # Undo permutation
-        x_final = np.zeros_like(rhs)
-        x_final[perm] = x
+        n  = len(x)
+        mc = len(z)
 
-        return x_final
-    
-    def compute_newton_direction(self, L, D, perm, rL, rA, rC, rSZ, x, z, s):
+        Z  = z          # diagonal entries of diag(z)
+        S  = s          # diagonal entries of diag(s)
 
-        S_inv_Z = np.diag(z / s)
+        # Build the (n + mc) x (n + mc) augmented system
+        #   [H,      -C  ]
+        #   [Z*C^T,   S  ]
+        top_left  = self.H                     # n x n
+        top_right = -self.C                    # n x mc
+        bot_left  = (Z[:, None] * self.C.T)    # mc x n  (row-wise scale of C^T)
+        bot_right = np.diag(S)                 # mc x mc
 
-        # rL tilde
-        rL_tilde = rL - self.C @ (S_inv_Z @ (rC - rSZ / z))
+        A_aug = np.block([
+            [top_left,  top_right],
+            [bot_left,  bot_right]
+        ])
 
-        rhs = -np.concatenate([rL_tilde, rA])
-        sol = self.solve_ldl(L, D, perm, rhs)
+        rhs_top = -rL
+        rhs_bot = Z * rC - rSZ + target        # = z*rC - z*s + target
+        rhs_aug = np.concatenate([rhs_top, rhs_bot])
 
-        dx = sol[:len(x)]
-        dy = sol[len(x):]
+        sol    = solve(A_aug, rhs_aug)
+        dx     = sol[:n]
+        dz     = sol[n:]
 
-        dz = (z / s) * (rC - rSZ / z - self.C.T @ dx)
-        ds = -rSZ / z - (s / z) * dz
+        # dy is zero (no equality constraints in this formulation; A is empty)
+        dy = np.zeros(self.A.shape[1])
+
+        # ds from primal feasibility: ds = C^T dx - rC
+        ds = self.C.T @ dx - rC
 
         return dx, dy, dz, ds
     
     def compute_step_alpha(self, z, dz, s, ds):
-        alpha = 1.0
-
-        idx = dz < 0
-        if np.any(idx):
-            alpha = min(alpha, np.min(-z[idx] / dz[idx]))
+        alpha_p = 1.0   # primal: governs s (and x, which is unconstrained but fine)
+        alpha_d = 1.0   # dual:   governs z
 
         idx = ds < 0
         if np.any(idx):
-            alpha = min(alpha, np.min(-s[idx] / ds[idx]))
+            alpha_p = min(alpha_p, np.min(-s[idx] / ds[idx]))
 
-        # we take a fraction of the step to ensure we stay in the interior of the feasible region
-        return self.ni * alpha 
+        idx = dz < 0
+        if np.any(idx):
+            alpha_d = min(alpha_d, np.min(-z[idx] / dz[idx]))
+
+        return alpha_p, alpha_d
     
     def solve(self):
         start = time.time()
@@ -123,43 +157,37 @@ class PrimalDualInteriorPointSolver:
                     feasibility=None
                 )
 
-            #Predictor step
+            #Predictor step — affine direction (no centering)
+            dx_aff, dy_aff, dz_aff, ds_aff = self.compute_newton_direction(
+                rL, rA, rC, rSZ, x, z, s, target=None
+            )
+            alpha_aff_p, alpha_aff_d = self.compute_step_alpha(z, dz_aff, s, ds_aff)
 
-            #we build the KKT system first
-            S_inv_Z = np.diag(z / s)
-                #compute H_bar
-            H_bar = self.H + self.C @ S_inv_Z @ self.C.T
-            KKT_matrix = np.block([
-                [H_bar, -self.A],
-                [-self.A.T, np.zeros((self.A.shape[1], self.A.shape[1]))]
-            ])
-                # compute the LDL factorization of the KKT matrix
-            L, D, perm = ldl(KKT_matrix)
+            #compute affine duality gap (split step)
+            mu_aff = ((z + alpha_aff_d * dz_aff) @ (s + alpha_aff_p * ds_aff)) / len(z)
+            mu_aff = max(mu_aff, 0.0)
+            #compute centering parameter
+            sigma = np.clip((mu_aff / mu)**3, 0.0, 1.0)
 
-            #affine direction - just get the aggressive direction without centering
+            #Corrector step — Mehrotra centering + second-order correction
+            # dz_aff and ds_aff are O(1) (augmented system avoids z/s blowup)
+            # so the cross product dz_aff*ds_aff is bounded and the correction is valid
+            target_corr = sigma * mu - dz_aff * ds_aff
 
-            dx_aff, dy_aff, dz_aff, ds_aff = self.compute_newton_direction(L, D, perm, rL, rA, rC, rSZ, x, z, s)
-            alpha_aff = self.compute_step_alpha(z, dz_aff, s, ds_aff)
+            dx, dy, dz, ds = self.compute_newton_direction(
+                rL, rA, rC, rSZ, x, z, s, target=target_corr
+            )
+            alpha_p, alpha_d = self.compute_step_alpha(z, dz, s, ds)
 
-
-            #compute affine duality gap 
-            mu_aff = ((z + alpha_aff * dz_aff) @ (s + alpha_aff * ds_aff)) / len(z)
-            #compute centering parameter 
-            sigma = (mu_aff / mu)**3
-
-            #Corrector step
-
-            #affine-centering correction direction
-            rSZ_corr = rSZ + dz_aff * ds_aff - sigma * mu * np.ones_like(z)
-
-            dx, dy, dz, ds = self.compute_newton_direction(L, D, perm, rL, rA, rC, rSZ_corr, x, z, s)
-            alpha = self.compute_step_alpha(z, dz, s, ds)
+            # we take a fraction of the step to ensure we stay in the interior of the feasible region
+            alpha_p = self.ni * alpha_p
+            alpha_d = self.ni * alpha_d
 
             #update iteration
-            x = x + alpha * dx
-            y = y + alpha * dy
-            z = z + alpha * dz
-            s = s + alpha * ds
+            x = x + alpha_p * dx
+            y = y + alpha_d * dy
+            z = z + alpha_d * dz
+            s = s + alpha_p * ds
 
             self.k += 1
 

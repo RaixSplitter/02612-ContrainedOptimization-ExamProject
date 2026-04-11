@@ -47,14 +47,20 @@ class PrimalActiveSetSolver:
 
         for (ctype, i) in W:
 
-            if ctype == "bl" or ctype == "bu":
-                # A_i row
+            if ctype == "bl":
+                # a_i^T x >= bl  →  row = +a_i
                 row = self.A[:, i].toarray().flatten()
-
-            elif ctype == "xl" or ctype == "xu":
-                # unit vector e_i
+            elif ctype == "bu":
+                # a_i^T x <= bu  →  rewrite as -a_i^T x >= -bu  →  row = -a_i
+                row = -self.A[:, i].toarray().flatten()
+            elif ctype == "xl":
+                # x_i >= l_i  →  row = +e_i
                 row = np.zeros(self.H.shape[0])
                 row[i] = 1.0
+            elif ctype == "xu":
+                # x_i <= u_i  →  rewrite as -x_i >= -u_i  →  row = -e_i
+                row = np.zeros(self.H.shape[0])
+                row[i] = -1.0
 
             rows.append(row)
 
@@ -84,13 +90,13 @@ class PrimalActiveSetSolver:
 
             if Ap[i] > tol:
                 alpha_i = (self.bu[i] - Ax[i]) / Ap[i]
-                if alpha_i > 0 and alpha_i < alpha:
+                if alpha_i >= 0 and alpha_i < alpha:
                     alpha = alpha_i
                     hit_constraint = ("bu", i)
 
             elif Ap[i] < -tol:
                 alpha_i = (self.bl[i] - Ax[i]) / Ap[i]
-                if alpha_i > 0 and alpha_i < alpha:
+                if alpha_i >= 0 and alpha_i < alpha:
                     alpha = alpha_i
                     hit_constraint = ("bl", i)
 
@@ -103,13 +109,13 @@ class PrimalActiveSetSolver:
 
             if p[i] > tol:
                 alpha_i = (self.u[i] - x[i]) / p[i]
-                if alpha_i > 0 and alpha_i < alpha:
+                if alpha_i >= 0 and alpha_i < alpha:
                     alpha = alpha_i
                     hit_constraint = ("xu", i)
 
             elif p[i] < -tol:
                 alpha_i = (self.l[i] - x[i]) / p[i]
-                if alpha_i > 0 and alpha_i < alpha:
+                if alpha_i >= 0 and alpha_i < alpha:
                     alpha = alpha_i
                     hit_constraint = ("xl", i)
 
@@ -119,7 +125,7 @@ class PrimalActiveSetSolver:
         start = time.time()
         # Init
         #find feasible starting point
-        x = LPsolver(self.H, self.g, self.bl, self.A, self.bu, self.l, self.u).solve().x
+        x = LPsolver(self.H, self.g, self.bl, self.A, self.bu, self.l, self.u).x
 
         #build working set W_0 - that includes all active constraints at the feasible starting point
         W = self.build_working_set(x)
@@ -133,7 +139,7 @@ class PrimalActiveSetSolver:
             #Case 1: p = 0
             if np.linalg.norm(p) < 1e-6:
                 #if all lambda >= 0 - all constaints in W are satisfied - we found a solution
-                if all(lambda_ >= 0):
+                if np.all(lambda_ >= 0):
                     obj = 0.5 * x @ (self.H @ x) + self.g @ x
                     end = time.time()
                     return SolutionStats(
@@ -144,10 +150,11 @@ class PrimalActiveSetSolver:
                         feasibility=None 
                     )
                 else:
-                    #remove the constraint with the most negative lambda from W and repeat (most penalized constraint)
-                    most_penalized_idx = np.argmin(lambda_)
-                    W.pop(most_penalized_idx) # W_k+1 = W_k \ {most_penalized_constraint}
-                                              # x_k+1 = x_k
+                    #remove the constraint with the  negative lambda from W and repeat (most penalized constraint)
+                    neg_idx = np.where(lambda_ < -1e-8)[0]
+                    j = neg_idx[0]
+                    W.pop(j) # W_k+1 = W_k \ {penalized_constraint}
+                             # x_k+1 = x_k
                     self.k += 1
 
             #Case 2: p != 0

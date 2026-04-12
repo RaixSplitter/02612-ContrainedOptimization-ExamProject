@@ -8,7 +8,7 @@ class RandomQPGenerator:
     min (1/2)x^T H x + g^T x
     s.t. bl <= A^T x <= bu
         l <= x <= u
-
+ 
     Parameters:
         n       : number of variables
         alpha   : regularization factor (alpha > 0)
@@ -16,7 +16,6 @@ class RandomQPGenerator:
 
     Returns:
         H, g, bl, A, bu, l, u
-        H and A are sparse matrices
     """
     def __init__(self, n, alpha, density, beta, flag="sparse"):
         self.n = n

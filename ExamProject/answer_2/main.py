@@ -1,4 +1,4 @@
-from random_qp import RandomQPGenerator
+from Generators.random_qp import RandomQPGenerator
 from QP_solvers.QPsolver import QPsolver
 from QP_solvers.PrimalActiveSet import PrimalActiveSetSolver
 from QP_solvers.PrimalDualInteriorPoint import PrimalDualInteriorPointSolver

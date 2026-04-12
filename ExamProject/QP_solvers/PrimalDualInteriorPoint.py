@@ -1,15 +1,22 @@
 from utils import SolutionStats
 import numpy as np
 import time
+from utils import SolutionStats
+import numpy as np
+import time
+from utils import SolutionStats
+import numpy as np
+import time
 from scipy.linalg import solve
 from scipy.sparse import issparse
+
 
 class PrimalDualInteriorPointSolver:
 
     def __init__(self, H, g, A, b, C, d):
         self.H = H.toarray() if issparse(H) else np.asarray(H)
         self.g = g.flatten()
-        self.A = A
+        self.A = A.toarray() if issparse(A) else np.asarray(A)
         self.b = b.flatten()
         self.C = C.toarray() if issparse(C) else np.asarray(C)
         self.d = d.flatten()
@@ -74,18 +81,6 @@ class PrimalDualInteriorPointSolver:
         return False
     
     def compute_newton_direction(self, rL, rA, rC, rSZ, x, z, s, target=None):
-        """Solve the augmented 2-block system to get Newton directions.
-
-        Instead of the reduced normal equations (which require z/s ratios
-        that blow up for near-active constraints), solve the larger but
-        numerically stable augmented system:
-
-            [H,     -C ] [dx]   =  [-rL                  ]
-            [Z*C^T,  S ] [dz]      [Z*rC - rSZ + target  ]
-
-        where Z = diag(z), S = diag(s).  No z/s ratio appears.
-        dz is O(1) even when z/s → ∞.
-        """
         if target is None:
             target = np.zeros_like(z)
 
@@ -125,18 +120,19 @@ class PrimalDualInteriorPointSolver:
         return dx, dy, dz, ds
     
     def compute_step_alpha(self, z, dz, s, ds):
-        alpha_p = 1.0   # primal: governs s (and x, which is unconstrained but fine)
-        alpha_d = 1.0   # dual:   governs z
+        alpha = 1.0
 
-        idx = ds < 0
-        if np.any(idx):
-            alpha_p = min(alpha_p, np.min(-s[idx] / ds[idx]))
-
+        # dual feasibility: z + α dz ≥ 0
         idx = dz < 0
         if np.any(idx):
-            alpha_d = min(alpha_d, np.min(-z[idx] / dz[idx]))
+            alpha = min(alpha, np.min(-z[idx] / dz[idx]))
 
-        return alpha_p, alpha_d
+        # primal feasibility: s + α ds ≥ 0
+        idx = ds < 0
+        if np.any(idx):
+            alpha = min(alpha, np.min(-s[idx] / ds[idx]))
+
+        return alpha
     
     def solve(self):
         start = time.time()
@@ -161,15 +157,15 @@ class PrimalDualInteriorPointSolver:
             dx_aff, dy_aff, dz_aff, ds_aff = self.compute_newton_direction(
                 rL, rA, rC, rSZ, x, z, s, target=None
             )
-            alpha_aff_p, alpha_aff_d = self.compute_step_alpha(z, dz_aff, s, ds_aff)
+            alpha_aff = self.compute_step_alpha(z, dz_aff, s, ds_aff)
 
             #compute affine duality gap (split step)
-            mu_aff = ((z + alpha_aff_d * dz_aff) @ (s + alpha_aff_p * ds_aff)) / len(z)
+            mu_aff = ((z + alpha_aff * dz_aff) @ (s + alpha_aff * ds_aff)) / len(z)
             mu_aff = max(mu_aff, 0.0)
             #compute centering parameter
             sigma = np.clip((mu_aff / mu)**3, 0.0, 1.0)
 
-            #Corrector step — Mehrotra centering + second-order correction
+            #Corrector step 
             # dz_aff and ds_aff are O(1) (augmented system avoids z/s blowup)
             # so the cross product dz_aff*ds_aff is bounded and the correction is valid
             target_corr = sigma * mu - dz_aff * ds_aff
@@ -177,18 +173,17 @@ class PrimalDualInteriorPointSolver:
             dx, dy, dz, ds = self.compute_newton_direction(
                 rL, rA, rC, rSZ, x, z, s, target=target_corr
             )
-            alpha_p, alpha_d = self.compute_step_alpha(z, dz, s, ds)
+
+            alpha = self.compute_step_alpha(z, dz, s, ds)
 
             # we take a fraction of the step to ensure we stay in the interior of the feasible region
-            alpha_p = self.ni * alpha_p
-            alpha_d = self.ni * alpha_d
+            alpha = self.ni * alpha  # damping
 
             #update iteration
-            x = x + alpha_p * dx
-            y = y + alpha_d * dy
-            z = z + alpha_d * dz
-            s = s + alpha_p * ds
-
+            x = x + alpha * dx
+            y = y + alpha * dy
+            z = z + alpha * dz
+            s = s + alpha * ds
             self.k += 1
 
         #no solution found within max iterations

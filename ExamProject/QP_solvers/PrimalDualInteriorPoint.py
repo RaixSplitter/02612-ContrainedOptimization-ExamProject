@@ -150,7 +150,7 @@ class PrimalDualInteriorPointSolver:
                     iterations=self.k,
                     time=end - start,
                     obj=obj,
-                    feasibility=None
+                    feasibility=True
                 )
 
             #Predictor step — affine direction (no centering)
@@ -194,5 +194,5 @@ class PrimalDualInteriorPointSolver:
             iterations=self.k,
             time=end - start,
             obj=obj,
-            feasibility=None 
+            feasibility=False
         )

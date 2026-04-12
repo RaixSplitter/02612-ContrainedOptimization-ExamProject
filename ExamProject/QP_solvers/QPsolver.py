@@ -52,5 +52,5 @@ class QPsolver:
             iterations=prob.solver_stats.num_iters,
             time=end - start,
             obj=obj,
-            feasibility=None 
+            feasibility=True if prob.status == cp.OPTIMAL else False 
         )

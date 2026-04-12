@@ -147,7 +147,7 @@ class PrimalActiveSetSolver:
                         iterations=self.k,
                         time=end - start,
                         obj=obj,
-                        feasibility=None 
+                        feasibility=True 
                     )
                 else:
                     #remove the constraint with the  negative lambda from W and repeat (most penalized constraint)
@@ -184,5 +184,5 @@ class PrimalActiveSetSolver:
             iterations=self.k,
             time=end - start,
             obj=obj,
-            feasibility=None 
+            feasibility=False 
         )
